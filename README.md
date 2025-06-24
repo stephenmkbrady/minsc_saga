@@ -1,103 +1,136 @@
-# Matrix Integration Dashboard (Minsc Saga)
+# Minsc Saga
 
-This repository contains the `Matrix Integration Dashboard` project, a proof-of-concept React frontend application designed to display and interact with Matrix chat messages and media. It connects to an external API (like the `Boo Memories` API) to fetch and present chat data, offering features like message search, filtering, and media previews.
+React dashboard for Matrix chat visualization with PIN-based authentication and Matrix widget integration.
 
-**Note:** This project is currently a development proof of concept and is not production-ready.
+## ✨ Features
 
-## Features
+- **PIN Authentication**: 6-digit secure room access with 24-hour expiration
+- **Matrix Widget Integration**: Embeddable widget for Matrix clients with automatic room detection
+- **Message Display**: Timeline view with search, filtering, and media previews
+- **Dark/Light Themes**: System preference detection with manual toggle
+- **Responsive Design**: Mobile-friendly Tailwind CSS interface
+- **API Integration**: Connects to boo_memories backend via JWT tokens
 
-*   **Message Display:** Fetches and displays Matrix chat messages.
-*   **Media Previews:** Supports inline previews for images, videos, and audio files.
-*   **Search and Filtering:** Allows searching messages by content, sender, and filtering by date range, message type, sender, and media presence/size.
-*   **Dark Mode:** User-toggleable dark/light theme.
-*   **Matrix Widget Integration:** Designed to be embedded as a widget within a Matrix client, automatically authenticating and fetching data for the current room.
-*   **API Integration:** Connects to a backend API for data retrieval and media downloads.
+## 🚀 Quick Start
 
-## Getting Started
-
-These instructions will get you a copy of the project up and running on your local machine for development and testing purposes.
-
-### Prerequisites
-
-*   **Node.js** (LTS version recommended)
-*   **npm** (Node Package Manager, usually comes with Node.js)
-
-### Installation
-
-1.  **Clone the repository:**
-
-    ```bash
-    git clone https://github.com/stephenmkbrady/minsc_saga.git
-    cd minsc_saga
-    ```
-
-2.  **Install dependencies:**
-
-    ```bash
-    npm install
-    ```
-
-### Configuration
-
-Create a `.env` file in the `minsc_saga/` directory with your environment variables.
-
-**Required:**
-
-*   `REACT_APP_DATABASE_API_BASE_URL`: The base URL of your `Boo Memories` API (e.g., `http://localhost:8000`).
-*   `REACT_APP_DATABASE_API_KEY`: The API key for authenticating with your `Boo Memories` API.
-
-Example `.env`:
-
-```
-REACT_APP_DATABASE_API_BASE_URL="http://localhost:8000"
-REACT_APP_DATABASE_API_KEY="your_boo_memories_api_key"
-```
-
-### Running the Application
-
-To run the React development server:
+### Docker Method (Recommended)
 
 ```bash
-npm start
+cd minsc_saga/
+
+# Development mode with hot reloading
+docker-compose --profile development up --build -d
+docker-compose logs minsc_saga-dev  # Check logs
+
+# Production mode (optimized build)
+docker-compose --profile production up --build -d
+docker-compose logs minsc-saga
+
+# Stop (CRITICAL - always clean up)
+docker-compose down
 ```
 
-This will open the application in your browser, usually at `http://localhost:3000`.
+### Local Development
 
-### Matrix Widget Integration
+```bash
+cd minsc_saga/
+npm install
+npm start  # Opens http://localhost:3000
+```
 
-This dashboard is designed to be embedded as a Matrix widget. To add it to a Matrix room:
+## ⚙️ Configuration
 
-1.  Ensure your `Boo Memories` API is running and accessible from where your Matrix client is running.
-2.  In your Matrix client, type the following command in the desired room:
+Create `.env` file in `minsc_saga/`:
 
-    ```
-    /addwidget <YOUR_DASHBOARD_URL>?matrix_user_id=$matrix_user_id&matrix_room_id=$matrix_room_id
-    ```
+```bash
+# Backend API Configuration
+REACT_APP_DATABASE_API_BASE_URL="https://your-api-domain.com"
+REACT_APP_DATABASE_API_KEY="your_boo_memories_api_key"
 
-    Replace `<YOUR_DASHBOARD_URL>` with the URL where your React application is hosted (e.g., `http://localhost:3000` if running locally).
+# PIN Authentication
+REACT_APP_PIN_AUTH_ENABLED=true
 
-    Example:
-    ```
-    /addwidget http://localhost:3000?matrix_user_id=$matrix_user_id&matrix_room_id=$matrix_room_id
-    ```
+# Development Server
+HOST=0.0.0.0
+PORT=3000
+```
 
-## Technologies Used
+## 🔐 PIN Authentication Flow
 
-*   [React](https://react.dev/) - JavaScript library for building user interfaces
-*   [Create React App](https://create-react-app.dev/) - Toolchain for building single-page applications
-*   [Lucide React](https://lucide.dev/icons/) - Beautifully simple and customizable open-source icons
-*   [Tailwind CSS](https://tailwindcss.com/) - A utility-first CSS framework (via `postcss` and `autoprefixer` dev dependencies)
-*   `@testing-library/react` - For React component testing
-*   `matrix-widget-api` - For Matrix widget integration (used internally by `App.js`)
+1. **User opens dashboard** → PIN prompt appears for room access
+2. **User goes to Matrix room** → Sends `!pin` command to boo_bot
+3. **boo_bot generates PIN** → 6-digit PIN valid for 24 hours  
+4. **User enters PIN** → Dashboard validates and gets room access token
+5. **Access granted** → Room messages and media displayed
 
-## Contributing
+### PIN Commands in Matrix
+- `!pin` or `!getpin` - Request PIN for current room
+- Rate limited: 3 requests per hour per room
+- PINs expire after 24 hours for security
 
-Contributions are welcome! Please feel free to open issues or submit pull requests.
+## 🔗 Matrix Widget Integration
 
-## License
+Add widget to any Matrix room:
 
-This project is licensed under the MIT License - see the LICENSE.md file for details (if applicable).
+```bash
+# In Matrix client, type in desired room:
+/addwidget https://your-dashboard-domain.com/?matrix_user_id=$matrix_user_id&matrix_room_id=$matrix_room_id
 
-## Acknowledgements
+# For local development:
+/addwidget http://localhost:3000?matrix_user_id=$matrix_user_id&matrix_room_id=$matrix_room_id
+```
 
-This project was partially generated by Claude 4 Sonnet and Gemini 2.5 Flash.
+Widget automatically detects room context and prompts for PIN authentication on first access.
+
+## 🧪 Testing
+
+```bash
+# React tests
+cd minsc_saga/
+npm test
+npm test -- --coverage --watchAll=false
+
+# Full stack PIN test
+# 1. Start all services
+cd boo_memories && docker-compose --profile sqlite up -d
+cd ../boo_bot && docker-compose up -d  
+cd ../minsc_saga && docker-compose --profile development up -d
+
+# 2. Test PIN flow
+open "http://localhost:3000?matrix_user_id=@test:example.com&matrix_room_id=!test:example.com"
+
+# 3. Clean up (CRITICAL)
+cd boo_bot && docker-compose down
+cd ../boo_memories && docker-compose --profile sqlite down
+cd ../minsc_saga && docker-compose down
+```
+
+## 🏗️ Architecture
+
+```
+minsc_saga/
+├── src/
+│   ├── App.js              # Main application with PIN auth
+│   ├── components/
+│   │   ├── PINAuth.js      # PIN authentication modal
+│   │   ├── Dashboard.js    # Main dashboard interface
+│   │   └── MessageList.js  # Message display components
+│   └── styles/
+│       └── globals.css     # Tailwind CSS configuration
+├── docker-compose.yml      # Multi-profile deployment
+└── package.json           # React dependencies
+```
+
+## 🔗 Integration
+
+Works with:
+- **boo_bot**: Generates PINs via `!pin` command
+- **boo_memories**: Backend API for message/media storage and PIN validation
+
+## 📚 Technologies
+
+- [React](https://react.dev/) - Frontend framework
+- [Tailwind CSS](https://tailwindcss.com/) - Utility-first styling
+- [Matrix Widget API](https://github.com/matrix-org/matrix-widget-api) - Widget integration
+- [Lucide React](https://lucide.dev/) - Icon library
+- Docker - Containerized deployment

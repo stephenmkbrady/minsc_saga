@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Search, Download, Image, FileText, Video, Music, Sun, Moon, Lock, AlertCircle, Filter, X, ChevronDown } from 'lucide-react';
 import styles from './MatrixIntegration.module.css';
+import PINAuth from './components/PINAuth';
+import { roomAuthManager } from './utils/roomAuth';
 
 // Add keyframes animation for smooth refresh indicator and new messages
 const animationStyles = `
@@ -273,6 +275,10 @@ const MatrixIntegration = () => {
   const [roomId, setRoomId] = useState('');
   const [matrixUserId, setMatrixUserId] = useState('');
   const [widgetApi, setWidgetApi] = useState(null);
+  
+  // PIN Authentication state
+  const [pinAuthRequired, setPinAuthRequired] = useState(false);
+  const [roomAuthStatus, setRoomAuthStatus] = useState(null);
 
   // Faceted search filters
   const [filters, setFilters] = useState({
@@ -287,8 +293,9 @@ const MatrixIntegration = () => {
   const [showFilters, setShowFilters] = useState(false);
 
   // Configuration - API URL and API key
-  const API_BASE_URL = process.env.REACT_APP_DATABASE_API_BASE_URL || 'https://base.example.com';
+  const API_BASE_URL = process.env.REACT_APP_DATABASE_API_BASE_URL || '';
   const API_KEY = process.env.REACT_APP_DATABASE_API_KEY || '';
+  const PIN_AUTH_ENABLED = process.env.REACT_APP_PIN_AUTH_ENABLED === 'true';
 
   // Save theme preference to localStorage whenever it changes
   useEffect(() => {
@@ -306,7 +313,7 @@ const MatrixIntegration = () => {
       }
 
       const script = document.createElement('script');
-      script.src = 'https://unpkg.com/matrix-widget-api@0.1.0/dist/api.min.js';
+      script.src = process.env.REACT_APP_MATRIX_WIDGET_API_URL || 'https://unpkg.com/matrix-widget-api@0.1.0/dist/api.min.js';
       script.onload = resolve;
       script.onerror = () => reject(new Error('Failed to load Matrix Widget API'));
       document.head.appendChild(script);
@@ -429,17 +436,30 @@ const MatrixIntegration = () => {
     } finally {
       setAuthLoading(false);
     }
-  }, []);
+  }, [API_BASE_URL, API_KEY]);
 
   // Simplified fetchMessages without membership verification
   const fetchMessages = useCallback(async (isInitialLoad = false) => {
     console.log('📨 FETCHMESSAGES called with:');
     console.log('  Current matrixUserId state:', matrixUserId);
     console.log('  Current roomId state:', roomId);
+    console.log('  PIN_AUTH_ENABLED:', PIN_AUTH_ENABLED);
     
     if (!roomId || !matrixUserId) {
       console.log('⚠️ Skipping message fetch - missing room ID or user ID');
       return;
+    }
+
+    // Check authentication requirements
+    if (PIN_AUTH_ENABLED) {
+      const authStatus = roomAuthManager.getRoomAuthStatus(roomId);
+      console.log('🔐 Auth status check in fetchMessages:', authStatus);
+      if (!authStatus.authenticated) {
+        console.log('⚠️ Skipping message fetch - PIN authentication required');
+        setPinAuthRequired(true);
+        return;
+      }
+      console.log('✅ PIN authentication verified, proceeding with fetch');
     }
 
     try {
@@ -450,26 +470,45 @@ const MatrixIntegration = () => {
       }
       setError(null);
       
-      // Simplified query parameters
-      const queryParams = new URLSearchParams({
-        room_id: roomId,
-        include_media: 'true',
-        limit: '1000'
-      });
+      // Choose API endpoint based on authentication method
+      let apiUrl, headers;
+      
+      if (PIN_AUTH_ENABLED) {
+        // Use UI proxy endpoint with room access token
+        apiUrl = `${API_BASE_URL}/ui/rooms/${encodeURIComponent(roomId)}/messages`;
+        const authStatus = roomAuthManager.getRoomAuthStatus(roomId);
+        headers = {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${authStatus.accessToken}`
+        };
+        
+        // Add query parameters
+        const queryParams = new URLSearchParams({
+          include_media: 'true',
+          limit: '1000'
+        });
+        apiUrl += `?${queryParams}`;
+      } else {
+        // Use legacy direct API endpoint with API key
+        const queryParams = new URLSearchParams({
+          room_id: roomId,
+          include_media: 'true',
+          limit: '1000'
+        });
+        apiUrl = `${API_BASE_URL}/messages?${queryParams}`;
+        headers = {
+          'Content-Type': 'application/json',
+        };
+        
+        if (API_KEY) {
+          headers['Authorization'] = `Bearer ${API_KEY}`;
+        }
+      }
       
       console.log('📊 API CALL PARAMETERS:');
       console.log('  room_id being sent:', roomId);
-      
-      const apiUrl = `${API_BASE_URL}/messages?${queryParams}`;
+      console.log('  authentication method:', PIN_AUTH_ENABLED ? 'PIN' : 'API_KEY');
       console.log(`📨 Fetching messages from: ${apiUrl}`);
-      
-      const headers = {
-        'Content-Type': 'application/json',
-      };
-      
-      if (API_KEY) {
-        headers['Authorization'] = `Bearer ${API_KEY}`;
-      }
 
       const response = await fetch(apiUrl, {
         method: 'GET',
@@ -574,16 +613,32 @@ const MatrixIntegration = () => {
         setRefreshing(false);
       }
     }
-  }, [roomId, matrixUserId, widgetApi, API_BASE_URL, API_KEY]);
+  }, [roomId, matrixUserId, widgetApi, API_BASE_URL, API_KEY, PIN_AUTH_ENABLED]);
 
   const fetchStats = useCallback(async () => {
     try {
-      const headers = {
-        'Content-Type': 'application/json',
-      };
+      let headers;
       
-      if (API_KEY) {
-        headers['Authorization'] = `Bearer ${API_KEY}`;
+      if (PIN_AUTH_ENABLED) {
+        // For PIN authentication, use room access token if available
+        const authStatus = roomAuthManager.getRoomAuthStatus(roomId);
+        if (!authStatus.authenticated) {
+          console.log('⚠️ Skipping stats fetch - PIN authentication required');
+          return;
+        }
+        headers = {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${authStatus.accessToken}`
+        };
+      } else {
+        // Use legacy API key authentication
+        headers = {
+          'Content-Type': 'application/json',
+        };
+        
+        if (API_KEY) {
+          headers['Authorization'] = `Bearer ${API_KEY}`;
+        }
       }
       
       const response = await fetch(`${API_BASE_URL}/stats`, {
@@ -607,7 +662,7 @@ const MatrixIntegration = () => {
     } catch (error) {
       console.error('Error fetching stats:', error);
     }
-  }, [API_BASE_URL, API_KEY]);
+  }, [API_BASE_URL, API_KEY, PIN_AUTH_ENABLED, roomId]);
 
   // Initialize Matrix Widget API
   useEffect(() => {
@@ -617,9 +672,49 @@ const MatrixIntegration = () => {
     console.log('  API_KEY available:', API_KEY ? 'Yes' : 'No');
     console.log('  Current window.location.href:', window.location.href);
     console.log('  Current window.location.search:', window.location.search);
+    console.log('  URLSearchParams test:', new URLSearchParams(window.location.search).toString());
+    console.log('  Direct param check - matrix_user_id:', new URLSearchParams(window.location.search).get('matrix_user_id'));
+    console.log('  Direct param check - matrix_room_id:', new URLSearchParams(window.location.search).get('matrix_room_id'));
+    console.log('🔧 About to call initializeWidgetApi...');
     
     initializeWidgetApi();
   }, [initializeWidgetApi, API_BASE_URL, API_KEY]);
+
+  // Check room authentication status
+  const checkRoomAuth = useCallback(() => {
+    if (!roomId || !PIN_AUTH_ENABLED) {
+      setPinAuthRequired(false);
+      setRoomAuthStatus(null);
+      return;
+    }
+
+    const authStatus = roomAuthManager.getRoomAuthStatus(roomId);
+    setRoomAuthStatus(authStatus);
+    setPinAuthRequired(!authStatus.authenticated);
+  }, [roomId, PIN_AUTH_ENABLED]);
+
+  // Handle successful PIN authentication
+  const handlePinAuthSuccess = useCallback((authData) => {
+    console.log('🎉 PIN authentication successful:', authData);
+    roomAuthManager.setRoomAuth(authData.roomId, authData.accessToken, authData.expiresAt);
+    setPinAuthRequired(false);
+    const newAuthStatus = roomAuthManager.getRoomAuthStatus(roomId);
+    console.log('🔐 New auth status after PIN success:', newAuthStatus);
+    setRoomAuthStatus(newAuthStatus);
+    // Trigger data fetch after successful authentication
+    if (roomId && matrixUserId) {
+      console.log('🚀 Triggering data fetch after successful PIN auth');
+      fetchMessages(true);
+      fetchStats();
+    }
+  }, [roomId, matrixUserId, fetchMessages, fetchStats]);
+
+  // Handle PIN authentication error
+  const handlePinAuthError = useCallback((error) => {
+    console.error('❌ PIN authentication error:', error);
+    console.error('❌ Error details:', JSON.stringify(error, null, 2));
+    setError(`PIN authentication failed: ${error}`);
+  }, []);
 
   // Initial data fetch and auto-refresh setup
   useEffect(() => {
@@ -650,6 +745,13 @@ const MatrixIntegration = () => {
       console.log('  matrixUserId:', matrixUserId);
     }
   }, [authenticated, roomId, matrixUserId, fetchMessages, fetchStats]);
+
+  // Check room authentication when roomId changes
+  useEffect(() => {
+    if (roomId) {
+      checkRoomAuth();
+    }
+  }, [roomId, checkRoomAuth]);
 
   // Get unique values for filter dropdowns
   const uniqueSenders = useMemo(() => {
@@ -759,10 +861,19 @@ const MatrixIntegration = () => {
 
   const handleDownload = async (mediaUrl, filename) => {
     try {
-      const headers = {};
+      let headers = {};
       
-      if (API_KEY) {
-        headers['Authorization'] = `Bearer ${API_KEY}`;
+      if (PIN_AUTH_ENABLED) {
+        // For PIN authentication, use room access token
+        const authStatus = roomAuthManager.getRoomAuthStatus(roomId);
+        if (authStatus.authenticated) {
+          headers['Authorization'] = `Bearer ${authStatus.accessToken}`;
+        }
+      } else {
+        // Use legacy API key authentication
+        if (API_KEY) {
+          headers['Authorization'] = `Bearer ${API_KEY}`;
+        }
       }
       
       const response = await fetch(mediaUrl, {
@@ -855,6 +966,22 @@ const MatrixIntegration = () => {
     );
   }
 
+  // PIN Authentication Modal
+  console.log('🔐 PIN Modal Check:', { authenticated, pinAuthRequired, PIN_AUTH_ENABLED });
+  if (authenticated && pinAuthRequired && PIN_AUTH_ENABLED) {
+    console.log('🔐 Showing PIN modal');
+    return (
+      <PINAuth
+        roomId={roomId}
+        onAuthSuccess={handlePinAuthSuccess}
+        onAuthError={handlePinAuthError}
+        apiBaseUrl={API_BASE_URL}
+        apiKey={API_KEY}
+        isDarkMode={isDarkMode}
+      />
+    );
+  }
+
   // Main loading screen
   if (loading) {
     return (
@@ -868,7 +995,7 @@ const MatrixIntegration = () => {
   }
 
   return (
-    <div className={getThemeClass('container')}>
+    <div className={getThemeClass('container')} data-testid="matrix-integration-container">
       <div className={styles.maxWidth}>
         {/* Header */}
         <div className={getThemeClass('card')}>
@@ -881,6 +1008,24 @@ const MatrixIntegration = () => {
               <p className={getThemeClass('roomInfo')}>
                 Room: <span className={styles.monospace}>{roomId}</span>
               </p>
+              
+              {/* PIN Authentication Status */}
+              {PIN_AUTH_ENABLED && roomAuthStatus && (
+                <div className={styles.authStatus}>
+                  {roomAuthStatus.authenticated ? (
+                    <span className={`${styles.authIndicator} ${styles.authSuccess}`}>
+                      🔐 Authenticated
+                      {roomAuthStatus.status === 'expiring_soon' && (
+                        <span className={styles.authWarning}> (expires soon)</span>
+                      )}
+                    </span>
+                  ) : (
+                    <span className={`${styles.authIndicator} ${styles.authRequired}`}>
+                      🔒 PIN Required
+                    </span>
+                  )}
+                </div>
+              )}
               
               <div className={getThemeClass('statusInfo')}>
                 Auto-refreshing every 30 seconds • Last updated: {lastUpdateTime.toLocaleTimeString()}

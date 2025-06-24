@@ -1,0 +1,41 @@
+version: '3.8'
+
+services:
+  # Production build
+  minsc-saga:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    network_mode: host
+    environment:
+      - REACT_APP_DATABASE_API_BASE_URL=${REACT_APP_DATABASE_API_BASE_URL}
+      - REACT_APP_DATABASE_API_KEY=${REACT_APP_DATABASE_API_KEY:-}
+      - REACT_APP_PIN_AUTH_ENABLED=${REACT_APP_PIN_AUTH_ENABLED:-true}
+    env_file:
+      - .env
+    restart: unless-stopped
+    container_name: minsc_saga
+    profiles:
+      - production
+
+  # Development build with hot reloading
+  minsc-saga-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    network_mode: host
+    environment:
+      - REACT_APP_DATABASE_API_BASE_URL=${REACT_APP_DATABASE_API_BASE_URL}
+      - REACT_APP_DATABASE_API_KEY=${REACT_APP_DATABASE_API_KEY:-}
+      - REACT_APP_PIN_AUTH_ENABLED=${REACT_APP_PIN_AUTH_ENABLED:-true}
+      - CHOKIDAR_USEPOLLING=true
+    env_file:
+      - .env
+    volumes:
+      - ./src:/app/src
+      - ./public:/app/public
+      - /app/node_modules
+    restart: unless-stopped
+    container_name: minsc_saga_dev
+    profiles:
+      - development
