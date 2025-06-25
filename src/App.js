@@ -138,6 +138,98 @@ const MediaPreview = ({ message, apiKey, apiBaseUrl, onError, authToken, pinAuth
     return <img src={imageSrc} alt={alt} className={className} />;
   };
 
+  // Custom Video component with authentication
+  const AuthenticatedVideo = ({ src, className, onLoad, onError }) => {
+    const [videoSrc, setVideoSrc] = useState(null);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState(false);
+
+    useEffect(() => {
+      let objectUrl = null;
+      
+      const loadVideo = async () => {
+        try {
+          setLoading(true);
+          setError(false);
+          
+          const headers = {};
+          
+          // Use appropriate authentication method
+          if (pinAuthEnabled && authToken) {
+            console.log('🔍 AuthenticatedVideo - Using PIN auth token:', authToken.substring(0, 20) + '...');
+            headers['Authorization'] = `Bearer ${authToken}`;
+          } else if (apiKey) {
+            console.log('🔍 AuthenticatedVideo - Using API key:', apiKey.substring(0, 10) + '...');
+            headers['Authorization'] = `Bearer ${apiKey}`;
+          } else {
+            console.log('🔍 AuthenticatedVideo - No authentication available');
+          }
+
+          const response = await fetch(src, { headers });
+          if (!response.ok) {
+            throw new Error(`Failed to load video: ${response.status} ${response.statusText}`);
+          }
+          
+          const blob = await response.blob();
+          objectUrl = URL.createObjectURL(blob);
+          setVideoSrc(objectUrl);
+          setLoading(false);
+          if (onLoad) onLoad();
+        } catch (error) {
+          console.error('AuthenticatedVideo error:', error);
+          setLoading(false);
+          setError(true);
+          if (onError) onError(error);
+        }
+      };
+
+      if (src) {
+        loadVideo();
+      }
+
+      return () => {
+        if (objectUrl) {
+          URL.revokeObjectURL(objectUrl);
+        }
+      };
+    }, [src, apiKey, authToken, pinAuthEnabled, onLoad, onError]);
+
+    if (loading) {
+      return (
+        <div className={styles.mediaThumbnailLoader}>
+          <div className={styles.spinner}></div>
+          <span>Loading video...</span>
+        </div>
+      );
+    }
+
+    if (error || !videoSrc) {
+      return (
+        <div className={styles.mediaThumbnailError}>
+          <Video className={styles.smallIcon} />
+          <span>Video preview failed</span>
+        </div>
+      );
+    }
+
+    return (
+      <video
+        src={videoSrc}
+        className={className}
+        controls
+        preload="metadata"
+        onLoadStart={() => console.log('Video loading started')}
+        onError={(e) => {
+          console.error('Video element error:', e);
+          setError(true);
+          if (onError) onError(e);
+        }}
+      >
+        Your browser doesn't support video playback.
+      </video>
+    );
+  };
+
   // Render based on media type
   if (messageType === 'image' || mediaType.startsWith('image/')) {
     return (
@@ -193,27 +285,12 @@ const MediaPreview = ({ message, apiKey, apiBaseUrl, onError, authToken, pinAuth
     return (
       <div className={styles.mediaPreviewContainer}>
         <div className={styles.videoThumbnailWrapper}>
-          <video
+          <AuthenticatedVideo
+            src={getAuthenticatedMediaUrl()}
             className={styles.videoThumbnail}
-            controls
-            preload="metadata"
-            onLoadStart={() => setIsLoading(false)}
+            onLoad={() => setIsLoading(false)}
             onError={handleImageError}
-          >
-            <source src={getAuthenticatedMediaUrl()} type={mediaType} />
-            Your browser doesn't support video playback.
-          </video>
-          {isLoading && (
-            <div className={styles.mediaThumbnailLoader}>
-              <div className={styles.spinner}></div>
-            </div>
-          )}
-          {error && (
-            <div className={styles.mediaThumbnailError}>
-              <Video className={styles.smallIcon} />
-              <span>Video preview failed</span>
-            </div>
-          )}
+          />
         </div>
       </div>
     );
