@@ -45,7 +45,7 @@ const formatFileSize = (bytes) => {
 };
 
 // Media Preview Component
-const MediaPreview = ({ message, apiKey, apiBaseUrl, onError }) => {
+const MediaPreview = ({ message, apiKey, apiBaseUrl, onError, authToken, pinAuthEnabled }) => {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -57,6 +57,10 @@ const MediaPreview = ({ message, apiKey, apiBaseUrl, onError }) => {
   // Create authenticated media URL
   const getAuthenticatedMediaUrl = () => {
     if (!mediaUrl) return null;
+    // If URL is relative, prepend the API base URL
+    if (mediaUrl.startsWith('/')) {
+      return `${apiBaseUrl}${mediaUrl}`;
+    }
     return mediaUrl;
   };
 
@@ -86,8 +90,16 @@ const MediaPreview = ({ message, apiKey, apiBaseUrl, onError }) => {
       const loadImage = async () => {
         try {
           const headers = {};
-          if (apiKey) {
+          
+          // Use appropriate authentication method
+          if (pinAuthEnabled && authToken) {
+            console.log('🔍 MediaPreview - Using PIN auth token:', authToken.substring(0, 20) + '...');
+            headers['Authorization'] = `Bearer ${authToken}`;
+          } else if (apiKey) {
+            console.log('🔍 MediaPreview - Using API key:', apiKey.substring(0, 10) + '...');
             headers['Authorization'] = `Bearer ${apiKey}`;
+          } else {
+            console.log('🔍 MediaPreview - No authentication available');
           }
 
           const response = await fetch(src, { headers });
@@ -113,7 +125,7 @@ const MediaPreview = ({ message, apiKey, apiBaseUrl, onError }) => {
           URL.revokeObjectURL(objectUrl);
         }
       };
-    }, [src, apiKey, onLoad, onError]);
+    }, [src, apiKey, authToken, pinAuthEnabled, onLoad, onError]);
 
     if (loading) {
       return <div className={styles.mediaThumbnailLoader}>Loading...</div>;
@@ -477,6 +489,8 @@ const MatrixIntegration = () => {
         // Use UI proxy endpoint with room access token
         apiUrl = `${API_BASE_URL}/ui/rooms/${encodeURIComponent(roomId)}/messages`;
         const authStatus = roomAuthManager.getRoomAuthStatus(roomId);
+        console.log('🔍 FetchMessages - Auth status:', authStatus);
+        console.log('🔍 FetchMessages - Using token:', authStatus.accessToken?.substring(0, 20) + '...');
         headers = {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${authStatus.accessToken}`
@@ -520,6 +534,15 @@ const MatrixIntegration = () => {
       if (!response.ok) {
         console.error('Fetch error:', response.status, response.statusText);
         console.error('Response body:', rawResponseText);
+        
+        // Handle authentication failures
+        if (response.status === 401 || response.status === 403) {
+          console.log('🔒 Authentication failed - clearing token and showing PIN modal');
+          roomAuthManager.clearRoomAuth(roomId);
+          setPinAuthRequired(true);
+          throw new Error('Authentication expired. Please enter PIN again.');
+        }
+        
         throw new Error(`Failed to fetch messages: ${response.status} ${response.statusText}`);
       }
       
@@ -641,7 +664,12 @@ const MatrixIntegration = () => {
         }
       }
       
-      const response = await fetch(`${API_BASE_URL}/stats`, {
+      // Use appropriate stats endpoint based on authentication method
+      const statsUrl = PIN_AUTH_ENABLED 
+        ? `${API_BASE_URL}/ui/rooms/${encodeURIComponent(roomId)}/stats`
+        : `${API_BASE_URL}/stats`;
+      
+      const response = await fetch(statsUrl, {
         method: 'GET',
         headers: headers,
       });
@@ -658,6 +686,13 @@ const MatrixIntegration = () => {
         }
       } else {
         console.error('Stats fetch failed:', response.status, rawResponseText);
+        
+        // Handle authentication failures
+        if (response.status === 401 || response.status === 403) {
+          console.log('🔒 Stats authentication failed - clearing token and showing PIN modal');
+          roomAuthManager.clearRoomAuth(roomId);
+          setPinAuthRequired(true);
+        }
       }
     } catch (error) {
       console.error('Error fetching stats:', error);
@@ -752,6 +787,23 @@ const MatrixIntegration = () => {
       checkRoomAuth();
     }
   }, [roomId, checkRoomAuth]);
+
+  // Periodic token expiration check
+  useEffect(() => {
+    if (!PIN_AUTH_ENABLED || !roomId) return;
+
+    const interval = setInterval(() => {
+      const authStatus = roomAuthManager.getRoomAuthStatus(roomId);
+      if (!authStatus.authenticated) {
+        console.log('🔒 Periodic check: Token expired, showing PIN modal');
+        setPinAuthRequired(true);
+      } else if (authStatus.status === 'expiring_soon') {
+        console.log('⚠️ Token expiring soon, consider refreshing');
+      }
+    }, 60000); // Check every minute
+
+    return () => clearInterval(interval);
+  }, [roomId, PIN_AUTH_ENABLED]);
 
   // Get unique values for filter dropdowns
   const uniqueSenders = useMemo(() => {
@@ -881,6 +933,14 @@ const MatrixIntegration = () => {
       });
       
       if (!response.ok) {
+        // Handle authentication failures
+        if (response.status === 401 || response.status === 403) {
+          console.log('🔒 Download authentication failed - clearing token and showing PIN modal');
+          roomAuthManager.clearRoomAuth(roomId);
+          setPinAuthRequired(true);
+          throw new Error('Authentication expired. Please enter PIN again.');
+        }
+        
         throw new Error('Download failed');
       }
       
@@ -1301,6 +1361,8 @@ const MatrixIntegration = () => {
                               message={message}
                               apiKey={API_KEY}
                               apiBaseUrl={API_BASE_URL}
+                              authToken={PIN_AUTH_ENABLED ? roomAuthManager.getRoomAuthStatus(roomId)?.accessToken : null}
+                              pinAuthEnabled={PIN_AUTH_ENABLED}
                               onError={(error) => console.error('Media preview error:', error)}
                             />
                             
@@ -1310,7 +1372,12 @@ const MatrixIntegration = () => {
                                 {message.media_mimetype && ` • ${message.media_mimetype}`}
                               </span>
                               <button
-                                onClick={() => handleDownload(message.media_url, message.media_filename)}
+                                onClick={() => handleDownload(
+                                  message.media_url?.startsWith('/') 
+                                    ? `${API_BASE_URL}${message.media_url}` 
+                                    : message.media_url, 
+                                  message.media_filename
+                                )}
                                 className={styles.downloadBtn}
                               >
                                 <Download className={styles.smallIcon} />

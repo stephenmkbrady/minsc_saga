@@ -13,6 +13,7 @@ services:
       - REACT_APP_PIN_AUTH_ENABLED=${REACT_APP_PIN_AUTH_ENABLED:-true}
     env_file:
       - .env
+      - ../shared/.env.secrets
     restart: unless-stopped
     container_name: minsc_saga
     profiles:
@@ -31,6 +32,7 @@ services:
       - CHOKIDAR_USEPOLLING=true
     env_file:
       - .env
+      - ../shared/.env.secrets
     volumes:
       - ./src:/app/src
       - ./public:/app/public
